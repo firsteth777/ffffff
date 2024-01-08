@@ -15,6 +15,7 @@ import Playlist
 
 /// Lightweight class that manages a single MediaPlayer item
 /// The MediaPlayer is then passed to any controller that needs to use it.
+@MainActor
 public class PlaylistCarplayManager: NSObject {
   private var carPlayStatusObservers = [Any]()
   private(set) weak var mediaPlayer: MediaPlayer?

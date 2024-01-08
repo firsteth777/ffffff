@@ -222,11 +222,13 @@ class TabTrayController: AuthenticationController {
   required init?(coder: NSCoder) { fatalError() }
 
   deinit {
-    tabManager.removeDelegate(self)
-    
-    // Remove the open tabs service observer
-    if let observer = openTabsSessionServiceListener {
-      braveCore.openTabsAPI.removeObserver(observer)
+    Task { @MainActor in
+      tabManager.removeDelegate(self)
+      
+      // Remove the open tabs service observer
+      if let observer = openTabsSessionServiceListener {
+        braveCore.openTabsAPI.removeObserver(observer)
+      }
     }
   }
 

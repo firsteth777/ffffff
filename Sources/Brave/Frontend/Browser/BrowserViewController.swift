@@ -1891,22 +1891,27 @@ public class BrowserViewController: UIViewController {
           let result = BraveCertificateUtility.verifyTrust(serverTrust,
                                                            host: host,
                                                            port: port)
-          // Cert is valid!
-          if result == 0 {
-            tab.secureContentState = .secure
-          } else if result == Int32.min {
-            // Cert is valid but should be validated by the system
-            // Let the system handle it and we'll show an error if the system cannot validate it
-            try await BraveCertificateUtils.evaluateTrust(serverTrust, for: host)
-            tab.secureContentState = .secure
-          } else {
+          
+          try await Task { @MainActor in
+            // Cert is valid!
+            if result == 0 {
+              tab.secureContentState = .secure
+            } else if result == Int32.min {
+              // Cert is valid but should be validated by the system
+              // Let the system handle it and we'll show an error if the system cannot validate it
+              try await BraveCertificateUtils.evaluateTrust(serverTrust, for: host)
+              tab.secureContentState = .secure
+            } else {
+              tab.secureContentState = .invalidCert
+            }
+          }.value
+        } catch {
+          await MainActor.run {
             tab.secureContentState = .invalidCert
           }
-        } catch {
-          tab.secureContentState = .invalidCert
         }
         
-        Task { @MainActor in
+        await MainActor.run {
           self.updateURLBar()
         }
       }
@@ -2277,14 +2282,15 @@ public class BrowserViewController: UIViewController {
     }
   }
   
-  func toggleReaderMode() {
+  @MainActor
+  func toggleReaderMode() async {
     guard let tab = tabManager.selectedTab else { return }
     if let readerMode = tab.getContentScript(name: ReaderModeScriptHandler.scriptName) as? ReaderModeScriptHandler {
       switch readerMode.state {
       case .available:
-        enableReaderMode()
+        await enableReaderMode()
       case .active:
-        disableReaderMode()
+        await disableReaderMode()
       case .unavailable:
         break
       }

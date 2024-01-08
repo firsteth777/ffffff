@@ -31,7 +31,8 @@ protocol TabContentScript: TabContentScriptLoader {
   func verifyMessage(message: WKScriptMessage) -> Bool
   func verifyMessage(message: WKScriptMessage, securityToken: String) -> Bool
   
-  func userContentController(_ userContentController: WKUserContentController, didReceiveScriptMessage message: WKScriptMessage, replyHandler: @escaping (Any?, String?) -> Void)
+  nonisolated
+  func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) async -> (Any?, String?)
 }
 
 protocol TabDelegate {
@@ -75,6 +76,7 @@ enum TabSecureContentState {
   }
 }
 
+@MainActor
 class Tab: NSObject {
   let id: UUID
   let rewardsId: UInt32
@@ -497,22 +499,6 @@ class Tab: NSObject {
     deleteWebView()
     deleteNewTabPageController()
     contentScriptManager.helpers.removeAll()
-    
-    // A number of mojo-powered core objects have to be deconstructed on the same
-    // thread they were constructed
-    var mojoObjects: [Any?] = [
-      _faviconDriver,
-      _syncTab,
-      _walletEthProvider,
-      _walletSolProvider,
-      _walletKeyringService
-    ]
-    
-    DispatchQueue.main.async {
-      // Reference inside to retain it, supress warnings by reading/writing
-      _ = mojoObjects
-      mojoObjects = []
-    }
   }
 
   var loading: Bool {
@@ -898,23 +884,25 @@ extension Tab: TabWebViewDelegate {
 private class TabContentScriptManager: NSObject, WKScriptMessageHandlerWithReply {
   fileprivate var helpers = [String: TabContentScript]()
 
+  @MainActor
   func uninstall(from tab: Tab) {
     helpers.forEach {
       let name = type(of: $0.value).messageHandlerName
       tab.webView?.configuration.userContentController.removeScriptMessageHandler(forName: name)
     }
   }
-
-  @objc func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage, replyHandler: @escaping (Any?, String?) -> Void) {
+  
+  func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) async -> (Any?, String?) {
     for helper in helpers.values {
       let scriptMessageHandlerName = type(of: helper).messageHandlerName
       if scriptMessageHandlerName == message.name {
-        helper.userContentController(userContentController, didReceiveScriptMessage: message, replyHandler: replyHandler)
-        return
+        return await helper.userContentController(userContentController, didReceive: message)
       }
     }
+    return (nil, nil)
   }
 
+  @MainActor 
   func addContentScript(_ helper: TabContentScript, name: String, forTab tab: Tab, contentWorld: WKContentWorld) {
     if let _ = helpers[name] {
       assertionFailure("Duplicate helper added: \(name)")
@@ -928,6 +916,7 @@ private class TabContentScriptManager: NSObject, WKScriptMessageHandlerWithReply
     tab.webView?.configuration.userContentController.addScriptMessageHandler(self, contentWorld: contentWorld, name: scriptMessageHandlerName)
   }
   
+  @MainActor 
   func removeContentScript(name: String, forTab tab: Tab, contentWorld: WKContentWorld) {
     if let helper = helpers[name] {
       let scriptMessageHandlerName = type(of: helper).messageHandlerName
