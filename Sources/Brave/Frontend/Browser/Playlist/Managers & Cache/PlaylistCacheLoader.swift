@@ -62,10 +62,6 @@ class LivePlaylistWebLoader: UIView, PlaylistWebLoader {
     fatalError("init(coder:) has not been implemented")
   }
 
-  deinit {
-    self.removeFromSuperview()
-  }
-
   func load(url: URL) async -> PlaylistInfo? {
     return await withCheckedContinuation { continuation in
       self.handler = { [weak self] in

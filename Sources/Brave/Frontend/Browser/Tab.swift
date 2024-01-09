@@ -30,8 +30,8 @@ protocol TabContentScript: TabContentScriptLoader {
   
   func verifyMessage(message: WKScriptMessage) -> Bool
   func verifyMessage(message: WKScriptMessage, securityToken: String) -> Bool
-  
-  nonisolated
+
+  @MainActor
   func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) async -> (Any?, String?)
 }
 
@@ -494,11 +494,19 @@ class Tab: NSObject {
     }
     webView = nil
   }
-
-  deinit {
+  
+  func destroy() {
     deleteWebView()
     deleteNewTabPageController()
     contentScriptManager.helpers.removeAll()
+  }
+
+  deinit {
+//    Task { @MainActor in
+//      deleteWebView()
+//      deleteNewTabPageController()
+//      contentScriptManager.helpers.removeAll()
+//    }
   }
 
   var loading: Bool {
@@ -892,6 +900,7 @@ private class TabContentScriptManager: NSObject, WKScriptMessageHandlerWithReply
     }
   }
   
+  @MainActor
   func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) async -> (Any?, String?) {
     for helper in helpers.values {
       let scriptMessageHandlerName = type(of: helper).messageHandlerName

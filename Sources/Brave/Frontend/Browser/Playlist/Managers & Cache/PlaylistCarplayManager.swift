@@ -15,7 +15,6 @@ import Playlist
 
 /// Lightweight class that manages a single MediaPlayer item
 /// The MediaPlayer is then passed to any controller that needs to use it.
-@MainActor
 public class PlaylistCarplayManager: NSObject {
   private var carPlayStatusObservers = [Any]()
   private(set) weak var mediaPlayer: MediaPlayer?
@@ -33,6 +32,7 @@ public class PlaylistCarplayManager: NSObject {
   var isPlaylistControllerPresented = false
 
   // When Picture-In-Picture is enabled, we need to store a reference to the controller to keep it alive, otherwise if it deallocates, the system automatically kills Picture-In-Picture.
+  @MainActor
   var playlistController: PlaylistViewController? {
     didSet {
       // TODO: REFACTOR and Decide what happens to Playlist in multiple windows in the future
@@ -55,6 +55,7 @@ public class PlaylistCarplayManager: NSObject {
     }
   }
   
+  @MainActor
   public func destroyPiP() {
     // This is the only way to have the system kill picture in picture as the restoration controller is deallocated
     // And that means the video is deallocated, its AudioSession is stopped, and the Picture-In-Picture controller is deallocated.
@@ -70,6 +71,7 @@ public class PlaylistCarplayManager: NSObject {
   // in use at any given moment
   public static let shared = PlaylistCarplayManager()
 
+  @MainActor
   func getCarPlayController() -> PlaylistCarplayController? {
     // On iOS 14, we use CPTemplate (Custom UI)
     // We control what gets displayed
@@ -107,6 +109,7 @@ public class PlaylistCarplayManager: NSObject {
     return carPlayController
   }
 
+  @MainActor
   func getPlaylistController(tab: Tab?, initialItem: PlaylistInfo?, initialItemPlaybackOffset: Double) -> PlaylistViewController {
 
     // If background playback is enabled (on iPhone), tabs will continue to play media
@@ -133,6 +136,7 @@ public class PlaylistCarplayManager: NSObject {
     return playlistController
   }
 
+  @MainActor
   func getPlaylistController(tab: Tab?, completion: @escaping (PlaylistViewController) -> Void) {
     if let playlistController = self.playlistController {
       return completion(playlistController)
@@ -158,6 +162,7 @@ public class PlaylistCarplayManager: NSObject {
     }
   }
 
+  @MainActor
   private func attemptInterfaceConnection(isCarPlayAvailable: Bool) {
     self.isCarPlayAvailable = isCarPlayAvailable
 
