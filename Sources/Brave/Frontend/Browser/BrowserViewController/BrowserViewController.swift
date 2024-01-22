@@ -3356,7 +3356,7 @@ extension BrowserViewController {
 extension BrowserViewController {
   func openBraveLeo() {
     let chat = UIHostingController(rootView: AIChatView(model: .init(braveCore: self.braveCore,
-                                                                     webView: self.tabManager.selectedTab!.webView!)))
+                                                                     webView: self.tabManager.selectedTab?.webView)))
     self.present(chat, animated: true)
   }
 }
