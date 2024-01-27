@@ -178,7 +178,9 @@ public class AppState {
       }
     }
     switches.append(.init(key: .rewardsFlags, value: BraveRewards.Configuration.current().flags))
-    
+    switches.append(.init(key: .init(rawValue: "disable-variations-seed-fetch-throttling"), value: "true"))
+    switches.append(.init(key: .init(rawValue: "fake-variations-channel"), value: "stable"))
+
     // Initialize BraveCore
     return BraveCoreMain(userAgent: UserAgent.mobile, additionalSwitches: switches)
   }
