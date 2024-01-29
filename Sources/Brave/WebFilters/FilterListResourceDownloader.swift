@@ -48,27 +48,7 @@ public actor FilterListResourceDownloader {
     let resourcesInfo = await didUpdateResourcesComponent(folderURL: resourcesFolderURL)
     async let startedCustomFilterListsDownloader: Void = FilterListCustomURLDownloader.shared.startIfNeeded()
     async let cachedFilterLists: Void = compileCachedFilterLists(resourcesInfo: resourcesInfo)
-    async let compileDefaultEngine: Void = compileDefaultFilterList(resourcesInfo: resourcesInfo)
-    
-    _ = await (startedCustomFilterListsDownloader, cachedFilterLists, compileDefaultEngine)
-  }
-  
-  /// Compile the default filter list from cache
-  private func compileDefaultFilterList(resourcesInfo: CachedAdBlockEngine.ResourcesInfo) async {
-    guard let defaultFilterListFolderURL = await FilterListSetting.makeFolderURL(
-      forComponentFolderPath: Preferences.AppState.lastFilterListCatalogueComponentFolderPath.value
-    ), FileManager.default.fileExists(atPath: defaultFilterListFolderURL.path) else {
-      // We don't really need this but its the most important filter list
-      // so without this not much point compiling anything else because we probably don't have it
-      return
-    }
-    
-    await compileEngine(
-      filterListFolderURL: defaultFilterListFolderURL, resourcesInfo: resourcesInfo,
-      engineSource: .adBlock, isAlwaysAggressive: false,
-      // This is false because we use a slim-list version of the list downloaded from S3
-      compileContentBlockers: false
-    )
+    _ = await (startedCustomFilterListsDownloader, cachedFilterLists)
   }
   
   /// This function adds engine resources to `AdBlockManager` from cached data representing the enabled filter lists.
@@ -83,12 +63,13 @@ public actor FilterListResourceDownloader {
   private func compileCachedFilterLists(resourcesInfo: CachedAdBlockEngine.ResourcesInfo) async {
     await FilterListStorage.shared.loadFilterListSettings()
     let filterListSettings = await FilterListStorage.shared.allFilterListSettings
+    let enabledSettings = await filterListSettings.asyncFilter({ setting in
+      return await setting.isEnabled
+    })
       
     do {
-      try await filterListSettings.asyncConcurrentForEach { setting in
-        guard await setting.isEnabled == true else { return }
-        guard let componentId = await setting.componentId else { return }
-        guard FilterList.disabledComponentIDs.contains(componentId) else { return }
+      try await enabledSettings.asyncConcurrentForEach { setting in
+        guard let source = await setting.engineSource else { return }
         
         // Try to load the filter list folder. We always have to compile this at start
         guard let folderURL = await setting.folderURL, FileManager.default.fileExists(atPath: folderURL.path) else {
@@ -96,7 +77,7 @@ public actor FilterListResourceDownloader {
         }
         
         await self.compileFilterListEngineIfNeeded(
-          fromComponentId: componentId, folderURL: folderURL,
+          source: source, folderURL: folderURL,
           isAlwaysAggressive: setting.isAlwaysAggressive,
           resourcesInfo: resourcesInfo,
           compileContentBlockers: false
@@ -150,36 +131,9 @@ public actor FilterListResourceDownloader {
   private func registerAllFilterListsIfNeeded(with adBlockService: AdblockService) async {
     guard !registeredFilterLists else { return }
     self.registeredFilterLists = true
-    registerToDefaultFilterList(with: adBlockService)
     
     for filterList in await FilterListStorage.shared.filterLists {
       register(filterList: filterList)
-    }
-  }
-  
-  /// Register to changes to the default filter list with the given ad-block service
-  private func registerToDefaultFilterList(with adBlockService: AdblockService) {
-    // Register the default filter list
-    Task { @MainActor in
-      for await folderURL in adBlockService.defaultComponentStream() {
-        guard let folderURL = folderURL else {
-          ContentBlockerManager.log.error("Missing folder for filter lists")
-          return
-        }
-        
-        await Task { @MainActor in
-          let folderSubPath = FilterListSetting.extractFolderPath(fromComponentFolderURL: folderURL)
-          Preferences.AppState.lastFilterListCatalogueComponentFolderPath.value = folderSubPath
-        }.value
-        
-        if let resourcesInfo = await AdBlockStats.shared.resourcesInfo {
-          await compileEngine(
-            filterListFolderURL: folderURL, resourcesInfo: resourcesInfo,
-            engineSource: .adBlock, isAlwaysAggressive: false, 
-            compileContentBlockers: false // This is set to false because we unfortunately have to use the slim list version of these lists
-          )
-        }
-      }
     }
   }
   
@@ -227,13 +181,13 @@ public actor FilterListResourceDownloader {
   
   /// Load general filter lists (shields) from the given `AdblockService` `shieldsInstallPath` `URL`.
   private func compileFilterListEngineIfNeeded(
-    fromComponentId componentId: String, folderURL: URL,
+    source: CachedAdBlockEngine.Source,
+    folderURL: URL,
     isAlwaysAggressive: Bool,
     resourcesInfo: CachedAdBlockEngine.ResourcesInfo,
     compileContentBlockers: Bool
   ) async {
     let version = folderURL.lastPathComponent
-    let source = CachedAdBlockEngine.Source.filterList(componentId: componentId)
     let filterListInfo = CachedAdBlockEngine.FilterListInfo(
       source: source,
       localFileURL: folderURL.appendingPathComponent("list.txt", conformingTo: .text),
@@ -275,10 +229,9 @@ public actor FilterListResourceDownloader {
           assertionFailure("We shouldn't have started downloads before getting this value")
           return
         }
-        
+        let source = filterList.engineSource
         await self.loadShields(
-          fromComponentId: filterList.entry.componentId, folderURL: folderURL, relativeOrder: filterList.order,
-          loadContentBlockers: true,
+          source: source, folderURL: folderURL, loadContentBlockers: true,
           isAlwaysAggressive: filterList.isAlwaysAggressive,
           resourcesInfo: resourcesInfo
         )
@@ -296,11 +249,10 @@ public actor FilterListResourceDownloader {
   /// If `loadContentBlockers` is set to `true`, this method will compile the rule lists to content blocker format and load them into the `WKContentRuleListStore`.
   /// As both these procedures are expensive, this should be set to `false` if this method is called on a blocking UI process such as the launch of the application.
   private func loadShields(
-    fromComponentId componentId: String, folderURL: URL, relativeOrder: Int, loadContentBlockers: Bool, isAlwaysAggressive: Bool,
+    source: CachedAdBlockEngine.Source, folderURL: URL,
+    loadContentBlockers: Bool, isAlwaysAggressive: Bool,
     resourcesInfo: CachedAdBlockEngine.ResourcesInfo
   ) async {
-    // Check if we're loading the new component or an old component from cache.
-    // The new component has a file `list.txt` which we check the presence of.
     let filterListURL = folderURL.appendingPathComponent("list.txt", conformingTo: .text)
     
     guard FileManager.default.fileExists(atPath: filterListURL.relativePath) else {
@@ -312,7 +264,7 @@ public actor FilterListResourceDownloader {
     
     // Add or remove the filter list from the engine depending if it's been enabled or not
     await self.compileFilterListEngineIfNeeded(
-      fromComponentId: componentId, folderURL: folderURL, isAlwaysAggressive: isAlwaysAggressive,
+      source: source, folderURL: folderURL, isAlwaysAggressive: isAlwaysAggressive,
       resourcesInfo: resourcesInfo, compileContentBlockers: loadContentBlockers
     )
   }
@@ -320,20 +272,6 @@ public actor FilterListResourceDownloader {
 
 /// Helpful extension to the AdblockService
 private extension AdblockService {
-  @MainActor func defaultComponentStream() -> AsyncStream<URL?> {
-    return AsyncStream { continuation in
-      registerDefaultComponent { folderPath in
-        guard let folderPath = folderPath else {
-          continuation.yield(nil)
-          return
-        }
-        
-        let folderURL = URL(fileURLWithPath: folderPath)
-        continuation.yield(folderURL)
-      }
-    }
-  }
-  
   @MainActor func resourcesComponentStream() -> AsyncStream<URL?> {
     return AsyncStream { continuation in
       registerResourceComponent { folderPath in

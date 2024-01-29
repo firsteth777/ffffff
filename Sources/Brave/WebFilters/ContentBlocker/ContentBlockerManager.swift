@@ -17,6 +17,7 @@ actor ContentBlockerManager {
   // TODO: Use a proper logger system once implemented and adblock files are moved to their own module(#5928).
   /// Logger to use for debugging.
   static let log = Logger(subsystem: Bundle.main.bundleIdentifier!, category: "adblock")
+  static let signpost = OSSignposter(logger: log)
   
   struct CompileOptions: OptionSet {
     let rawValue: Int
@@ -159,6 +160,8 @@ actor ContentBlockerManager {
   /// Should be used only as a cleanup once during launch to get rid of unecessary/old data.
   /// This is mostly for custom filter lists a user may have added.
   public func cleaupInvalidRuleLists(validTypes: Set<BlocklistType>) async {
+    let signpostID = Self.signpost.makeSignpostID()
+    let state = Self.signpost.beginInterval("cleaupInvalidRuleLists", id: signpostID)
     let availableIdentifiers = await ruleStore.availableIdentifiers() ?? []
     
     await availableIdentifiers.asyncConcurrentForEach { identifier in
@@ -176,12 +179,25 @@ actor ContentBlockerManager {
         assertionFailure()
       }
     }
+    
+    Self.signpost.endInterval("cleaupInvalidRuleLists", state)
   }
   
   /// Compile the rule list found in the given local URL using the specified modes
   func compileRuleList(at localFileURL: URL, for type: BlocklistType, options: CompileOptions = [], modes: [BlockingMode]) async throws {
-    let filterSet = try String(contentsOf: localFileURL)
-    let result = try AdblockEngine.contentBlockerRules(fromFilterSet: filterSet)
+    let result: ContentBlockingRulesResult
+    let signpostID = Self.signpost.makeSignpostID()
+    let state = Self.signpost.beginInterval("convertRules", id: signpostID, "\(type.debugDescription)")
+    
+    do {
+      let filterSet = try String(contentsOf: localFileURL)
+      result = try AdblockEngine.contentBlockerRules(fromFilterSet: filterSet)
+      Self.signpost.endInterval("convertRules", state)
+    } catch {
+      Self.signpost.endInterval("convertRules", state, "\(error.localizedDescription)")
+      throw error
+    }
+    
     try await compile(encodedContentRuleList: result.rulesJSON, for: type, options: options, modes: modes)
   }
   
@@ -256,16 +272,21 @@ actor ContentBlockerManager {
   /// Compile the given resource and store it in cache for the given blocklist type
   private func compile(ruleList: [[String: Any?]], for type: BlocklistType, mode: BlockingMode) async throws -> WKContentRuleList {
     let identifier = type.makeIdentifier(for: mode)
-    let modifiedData = try JSONSerialization.data(withJSONObject: ruleList)
-    let cleanedRuleList = String(bytes: modifiedData, encoding: .utf8)
-    let ruleList = try await ruleStore.compileContentRuleList(
-      forIdentifier: identifier, encodedContentRuleList: cleanedRuleList)
+    let signpostID = Self.signpost.makeSignpostID()
+    let state = Self.signpost.beginInterval("compileRuleList", id: signpostID, "\(identifier)")
     
-    guard let ruleList = ruleList else {
-      throw CompileError.noRuleListReturned
+    do {
+      let modifiedData = try JSONSerialization.data(withJSONObject: ruleList)
+      let cleanedRuleList = String(bytes: modifiedData, encoding: .utf8)
+      let ruleList = try await ruleStore.compileContentRuleList(
+        forIdentifier: identifier, encodedContentRuleList: cleanedRuleList)
+      guard let ruleList = ruleList else { throw CompileError.noRuleListReturned }
+      Self.signpost.endInterval("compileRuleList", state)
+      return ruleList
+    } catch {
+      Self.signpost.endInterval("compileRuleList", state, "\(error.localizedDescription)")
+      throw error
     }
-    
-    return ruleList
   }
   
   /// Return all the modes that need to be compiled for the given type
