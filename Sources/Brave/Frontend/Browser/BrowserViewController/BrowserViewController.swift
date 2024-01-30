@@ -30,6 +30,7 @@ import Growth
 import BraveShields
 import CertificateUtilities
 import ScreenTime
+import AIChat
 
 private let KVOs: [KVOConstants] = [
   .estimatedProgress,
@@ -3362,8 +3363,8 @@ extension BrowserViewController {
   private func presentAIChatController(with model: AIChatViewModel) {
     let chatController = UIHostingController(rootView:
                                               AIChatView(model: model,
-                                                         speechRecognizer:
-                                                          speechRecognizer,
+//                                                         speechRecognizer:
+//                                                          speechRecognizer,
                                                          openURL: openAIChatURL))
     self.present(chatController, animated: true)
   }
