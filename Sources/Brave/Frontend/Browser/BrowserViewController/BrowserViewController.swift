@@ -3362,11 +3362,10 @@ extension BrowserViewController {
   }
   
   private func presentAIChatController(with model: AIChatViewModel) {
-    let chatController = UIHostingController(rootView:
-                                              AIChatView(model: model,
-//                                                         speechRecognizer:
-//                                                          speechRecognizer,
-                                                         openURL: openAIChatURL))
+    let chatController = UIHostingController(rootView: AIChatView(
+      model: model,
+      speechRecognizer: speechRecognizer,
+      openURL: openAIChatURL))
     self.present(chatController, animated: true)
   }
   
